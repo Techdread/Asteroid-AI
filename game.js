@@ -8,6 +8,10 @@ const ASTEROID_VERTICES = 10;
 const ASTEROID_JAG = 0.4;
 const BULLET_SPEED = 500;
 const BULLET_LIFETIME = 2; // seconds
+const PARTICLE_LIFETIME = 1; // seconds
+const THRUST_PARTICLE_SPEED = 100;
+const EXPLOSION_PARTICLE_SPEED = 200;
+const SCREEN_SHAKE_DURATION = 0.2;
 
 class Game {
     constructor() {
@@ -25,6 +29,7 @@ class Game {
         this.ship = new Ship(this.canvas.width / 2, this.canvas.height / 2);
         this.asteroids = [];
         this.bullets = [];
+        this.particles = [];
         
         // Add shooting cooldown
         this.shootCooldown = 0;
@@ -40,6 +45,9 @@ class Game {
         
         // Spawn initial asteroids
         this.spawnAsteroids(5);
+        
+        // Screen shake
+        this.screenShake = 0;
     }
 
     resizeCanvas() {
@@ -88,6 +96,20 @@ class Game {
         
         // Update asteroids
         this.asteroids.forEach(asteroid => asteroid.update(deltaTime, this.canvas.width, this.canvas.height));
+        
+        // Update screen shake
+        if (this.screenShake > 0) {
+            this.screenShake -= deltaTime;
+        }
+
+        // Update particles
+        this.particles = this.particles.filter(particle => particle.isAlive());
+        this.particles.forEach(particle => particle.update(deltaTime, this.canvas.width, this.canvas.height));
+
+        // Add thrust particles
+        if (this.keys['ArrowUp']) {
+            this.createThrustParticles();
+        }
         
         // Check for collisions
         this.checkCollisions();
@@ -155,6 +177,10 @@ class Game {
                         localStorage.setItem('asteroidHighScore', this.highScore);
                     }
                     
+                    // Create explosion effect
+                    this.createExplosionParticles(asteroid.x, asteroid.y);
+                    this.screenShake = SCREEN_SHAKE_DURATION;
+                    
                     break;
                 }
             }
@@ -179,17 +205,74 @@ class Game {
                     this.ship.velocity = { x: 0, y: 0 };
                     this.ship.angle = 0;
                 }
+                
+                // Create explosion effect
+                this.createExplosionParticles(this.ship.x, this.ship.y, '#FF0000', 30);
+                this.screenShake = SCREEN_SHAKE_DURATION * 2;
+                
                 break;
             }
         }
     }
 
+    createThrustParticles() {
+        const angle = (this.ship.angle + 180) * Math.PI / 180; // Opposite to ship direction
+        const spread = Math.PI / 4; // 45-degree spread
+
+        for (let i = 0; i < 2; i++) {
+            const particleAngle = angle + (Math.random() - 0.5) * spread;
+            const speed = THRUST_PARTICLE_SPEED * (0.5 + Math.random() * 0.5);
+            
+            this.particles.push(new Particle(
+                this.ship.x - Math.cos(this.ship.angle * Math.PI / 180) * SHIP_SIZE / 2,
+                this.ship.y - Math.sin(this.ship.angle * Math.PI / 180) * SHIP_SIZE / 2,
+                {
+                    x: Math.cos(particleAngle) * speed,
+                    y: Math.sin(particleAngle) * speed
+                },
+                0.5, // lifetime
+                '#FFA500', // orange color
+                1 // size
+            ));
+        }
+    }
+
+    createExplosionParticles(x, y, color = 'white', count = 15) {
+        for (let i = 0; i < count; i++) {
+            const angle = (i / count) * Math.PI * 2;
+            const speed = EXPLOSION_PARTICLE_SPEED * (0.5 + Math.random() * 0.5);
+            
+            this.particles.push(new Particle(
+                x,
+                y,
+                {
+                    x: Math.cos(angle) * speed,
+                    y: Math.sin(angle) * speed
+                },
+                0.75, // lifetime
+                color,
+                2 // size
+            ));
+        }
+    }
+
     draw() {
+        // Apply screen shake
+        this.ctx.save();
+        if (this.screenShake > 0) {
+            const magnitude = 10 * (this.screenShake / SCREEN_SHAKE_DURATION);
+            this.ctx.translate(
+                Math.random() * magnitude - magnitude / 2,
+                Math.random() * magnitude - magnitude / 2
+            );
+        }
+
         // Clear canvas
         this.ctx.fillStyle = 'black';
         this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
         // Draw game objects
+        this.particles.forEach(particle => particle.draw(this.ctx));
         this.ship.draw(this.ctx);
         this.bullets.forEach(bullet => bullet.draw(this.ctx));
         this.asteroids.forEach(asteroid => asteroid.draw(this.ctx));
@@ -198,6 +281,8 @@ class Game {
         document.getElementById('scoreValue').textContent = this.score;
         document.getElementById('livesValue').textContent = this.lives;
         document.getElementById('highScoreValue').textContent = this.highScore;
+        
+        this.ctx.restore();
     }
 }
 
@@ -348,6 +433,45 @@ class Bullet {
         ctx.arc(0, 0, 2, 0, Math.PI * 2);
         ctx.fill();
         ctx.restore();
+    }
+}
+
+class Particle {
+    constructor(x, y, velocity, lifetime = PARTICLE_LIFETIME, color = 'white', size = 2) {
+        this.x = x;
+        this.y = y;
+        this.velocity = velocity;
+        this.lifetime = lifetime;
+        this.originalLifetime = lifetime;
+        this.color = color;
+        this.size = size;
+    }
+
+    update(deltaTime, canvasWidth, canvasHeight) {
+        this.x += this.velocity.x * deltaTime;
+        this.y += this.velocity.y * deltaTime;
+        this.lifetime -= deltaTime;
+
+        // Wrap around screen
+        if (this.x < 0) this.x = canvasWidth;
+        if (this.x > canvasWidth) this.x = 0;
+        if (this.y < 0) this.y = canvasHeight;
+        if (this.y > canvasHeight) this.y = 0;
+    }
+
+    draw(ctx) {
+        const alpha = this.lifetime / this.originalLifetime;
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = this.color;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+    }
+
+    isAlive() {
+        return this.lifetime > 0;
     }
 }
 
