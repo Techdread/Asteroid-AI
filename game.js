@@ -13,6 +13,12 @@ const PARTICLE_LIFETIME = 1; // seconds
 const THRUST_PARTICLE_SPEED = 100;
 const EXPLOSION_PARTICLE_SPEED = 200;
 const SCREEN_SHAKE_DURATION = 0.2;
+const UFO_LARGE_SIZE = 30;
+const UFO_SMALL_SIZE = 20;
+const UFO_LARGE_SPEED = 100;
+const UFO_SMALL_SPEED = 150;
+const UFO_SPAWN_INTERVAL = 10; // seconds
+const UFO_SHOOT_INTERVAL = 1; // seconds
 
 class SoundManager {
     constructor() {
@@ -32,6 +38,9 @@ class SoundManager {
         this.loadSound('shipExplode', 'sounds/shipExplode.wav');
         this.loadSound('beat1', 'sounds/beat1.wav');
         this.loadSound('beat2', 'sounds/beat2.wav');
+        this.loadSound('ufoLarge', 'sounds/ufoLarge.wav');
+        this.loadSound('ufoSmall', 'sounds/ufoSmall.wav');
+        this.loadSound('ufoShoot', 'sounds/ufoShoot.wav');
 
         // Add mute control
         window.addEventListener('keydown', (e) => {
@@ -109,8 +118,11 @@ class Game {
         // Game objects
         this.ship = new Ship(this.canvas.width / 2, this.canvas.height / 2);
         this.asteroids = [];
-        this.bullets = [];
-        this.particles = [];
+        this.bullets = [];  // Ship bullets
+        this.ufoBullets = []; // UFO bullets
+        this.ufos = [];
+        this.particles = []; // Re-add particles array
+        this.ufoSpawnTimer = UFO_SPAWN_INTERVAL;
         
         // Add shooting cooldown
         this.shootCooldown = 0;
@@ -175,11 +187,26 @@ class Game {
         this.ship.update(deltaTime, this.canvas.width, this.canvas.height);
         
         // Update bullets
-        this.bullets = this.bullets.filter(bullet => bullet.isAlive());
-        this.bullets.forEach(bullet => bullet.update(deltaTime, this.canvas.width, this.canvas.height));
+        for (let i = this.bullets.length - 1; i >= 0; i--) {
+            this.bullets[i].update(deltaTime);
+            if (!this.bullets[i].isVisible(this.canvas.width, this.canvas.height)) {
+                this.bullets.splice(i, 1);
+            }
+        }
+
+        // Update UFO bullets
+        for (let i = this.ufoBullets.length - 1; i >= 0; i--) {
+            this.ufoBullets[i].update(deltaTime);
+            if (!this.ufoBullets[i].isVisible(this.canvas.width, this.canvas.height)) {
+                this.ufoBullets.splice(i, 1);
+            }
+        }
         
         // Update asteroids
         this.asteroids.forEach(asteroid => asteroid.update(deltaTime, this.canvas.width, this.canvas.height));
+        
+        // Update UFOs
+        this.updateUFOs(deltaTime);
         
         // Update screen shake
         if (this.screenShake > 0) {
@@ -236,7 +263,7 @@ class Game {
     }
 
     checkCollisions() {
-        // Check bullet-asteroid collisions
+        // Check ship bullets against asteroids
         for (let i = this.bullets.length - 1; i >= 0; i--) {
             for (let j = this.asteroids.length - 1; j >= 0; j--) {
                 const bullet = this.bullets[i];
@@ -287,6 +314,73 @@ class Game {
             }
         }
 
+        // Check ship bullets against UFOs
+        for (let i = this.bullets.length - 1; i >= 0; i--) {
+            for (let j = this.ufos.length - 1; j >= 0; j--) {
+                const bullet = this.bullets[i];
+                const ufo = this.ufos[j];
+                
+                // Skip if UFO hasn't entered screen yet
+                if (!ufo.hasEnteredScreen) continue;
+                
+                const ufoBounds = ufo.getCollisionBounds();
+                const distance = this.distanceBetweenPoints(
+                    bullet.x, bullet.y,
+                    ufoBounds.x, ufoBounds.y
+                );
+                
+                if (distance < ufoBounds.radius) {
+                    // Remove bullet and UFO
+                    this.bullets.splice(i, 1);
+                    this.ufos.splice(j, 1);
+                    
+                    // Update score
+                    this.score += ufo.isSmall ? 1000 : 200;
+                    
+                    // Create explosion effect
+                    this.createExplosionParticles(ufo.x, ufo.y, '#FF00FF', 20);
+                    this.screenShake = SCREEN_SHAKE_DURATION;
+                    
+                    break;
+                }
+            }
+        }
+
+        // Check UFO bullets against ship
+        for (let i = this.ufoBullets.length - 1; i >= 0; i--) {
+            const bullet = this.ufoBullets[i];
+            const distance = this.distanceBetweenPoints(
+                bullet.x, bullet.y,
+                this.ship.x, this.ship.y
+            );
+            
+            if (distance < SHIP_SIZE / 2) {
+                // Remove bullet
+                this.ufoBullets.splice(i, 1);
+                
+                this.lives--;
+                if (this.lives <= 0) {
+                    document.getElementById('gameOver').classList.remove('hidden');
+                    document.getElementById('finalScore').textContent = this.score;
+                } else {
+                    // Reset ship position
+                    this.ship.x = this.canvas.width / 2;
+                    this.ship.y = this.canvas.height / 2;
+                    this.ship.velocity = { x: 0, y: 0 };
+                    this.ship.angle = 0;
+                }
+                
+                // Create explosion effects
+                this.createExplosionParticles(this.ship.x, this.ship.y, '#FF0000', 30);
+                this.screenShake = SCREEN_SHAKE_DURATION;
+                
+                // Play ship explosion sound
+                this.soundManager.play('shipExplode');
+                
+                break;
+            }
+        }
+
         // Check ship-asteroid collisions
         for (const asteroid of this.asteroids) {
             const distance = this.distanceBetweenPoints(
@@ -307,13 +401,52 @@ class Game {
                     this.ship.angle = 0;
                 }
                 
-                // Create explosion effect
+                // Create explosion effects
                 this.createExplosionParticles(this.ship.x, this.ship.y, '#FF0000', 30);
+                this.createExplosionParticles(asteroid.x, asteroid.y);
                 this.screenShake = SCREEN_SHAKE_DURATION * 2;
+                
+                // Remove asteroid
+                this.asteroids = this.asteroids.filter(a => a !== asteroid);
                 
                 // Play ship explosion sound
                 this.soundManager.play('shipExplode');
                 
+                break;
+            }
+        }
+
+        // Check ship-UFO collisions
+        for (const ufo of this.ufos) {
+            // Skip if UFO hasn't entered screen yet
+            if (!ufo.hasEnteredScreen) continue;
+
+            const ufoBounds = ufo.getCollisionBounds();
+            const distance = this.distanceBetweenPoints(
+                this.ship.x, this.ship.y,
+                ufoBounds.x, ufoBounds.y
+            );
+            
+            if (distance < ufoBounds.radius + SHIP_SIZE / 2) {
+                this.lives--;
+                if (this.lives <= 0) {
+                    document.getElementById('gameOver').classList.remove('hidden');
+                    document.getElementById('finalScore').textContent = this.score;
+                } else {
+                    // Reset ship position
+                    this.ship.x = this.canvas.width / 2;
+                    this.ship.y = this.canvas.height / 2;
+                    this.ship.velocity = { x: 0, y: 0 };
+                    this.ship.angle = 0;
+                }
+                
+                // Create explosion effects
+                this.createExplosionParticles(this.ship.x, this.ship.y, '#FF0000', 30);
+                this.createExplosionParticles(ufo.x, ufo.y, '#FF00FF', 20);
+                this.screenShake = SCREEN_SHAKE_DURATION * 2;
+                
+                // Remove UFO
+                this.ufos = this.ufos.filter(u => u !== ufo);
                 break;
             }
         }
@@ -360,6 +493,35 @@ class Game {
         }
     }
 
+    updateUFOs(deltaTime) {
+        // Update UFO spawn timer
+        this.ufoSpawnTimer -= deltaTime;
+        if (this.ufoSpawnTimer <= 0) {
+            this.ufoSpawnTimer = UFO_SPAWN_INTERVAL;
+            // 30% chance for small UFO, increases with score
+            const smallUfoChance = Math.min(0.3 + this.score / 10000, 0.7);
+            const isSmall = Math.random() < smallUfoChance;
+            this.ufos.push(new UFO(this.canvas.width, this.canvas.height, isSmall));
+        }
+
+        // Update existing UFOs
+        for (let i = this.ufos.length - 1; i >= 0; i--) {
+            const ufo = this.ufos[i];
+            const bullet = ufo.update(deltaTime, this.canvas.width, this.canvas.height, this.ship.x, this.ship.y);
+            
+            // Add UFO bullet if shot
+            if (bullet) {
+                this.ufoBullets.push(bullet);
+                this.soundManager.play('ufoShoot', 0.5);
+            }
+            
+            // Remove UFO if off screen
+            if (!ufo.isVisible(this.canvas.width)) {
+                this.ufos.splice(i, 1);
+            }
+        }
+    }
+
     draw() {
         // Apply screen shake
         this.ctx.save();
@@ -379,7 +541,9 @@ class Game {
         this.particles.forEach(particle => particle.draw(this.ctx));
         this.ship.draw(this.ctx);
         this.bullets.forEach(bullet => bullet.draw(this.ctx));
+        this.ufoBullets.forEach(bullet => bullet.draw(this.ctx));
         this.asteroids.forEach(asteroid => asteroid.draw(this.ctx));
+        this.ufos.forEach(ufo => ufo.draw(this.ctx));
 
         // Update UI
         document.getElementById('scoreValue').textContent = this.score;
@@ -485,7 +649,7 @@ class Asteroid {
         // Update position
         this.x += this.velocity.x * deltaTime;
         this.y += this.velocity.y * deltaTime;
-
+        
         // Wrap around screen
         if (this.x < 0) this.x = canvasWidth;
         if (this.x > canvasWidth) this.x = 0;
@@ -522,16 +686,10 @@ class Bullet {
         this.lifetime = BULLET_LIFETIME;
     }
 
-    update(deltaTime, canvasWidth, canvasHeight) {
+    update(deltaTime) {
         // Update position
         this.x += this.velocity.x * deltaTime;
         this.y += this.velocity.y * deltaTime;
-
-        // Wrap around screen
-        if (this.x < 0) this.x = canvasWidth;
-        if (this.x > canvasWidth) this.x = 0;
-        if (this.y < 0) this.y = canvasHeight;
-        if (this.y > canvasHeight) this.y = 0;
 
         // Update lifetime
         this.lifetime -= deltaTime;
@@ -539,6 +697,10 @@ class Bullet {
 
     isAlive() {
         return this.lifetime > 0;
+    }
+
+    isVisible(canvasWidth, canvasHeight) {
+        return this.x >= 0 && this.x <= canvasWidth && this.y >= 0 && this.y <= canvasHeight;
     }
 
     draw(ctx) {
@@ -549,6 +711,118 @@ class Bullet {
         ctx.arc(0, 0, 2, 0, Math.PI * 2);
         ctx.fill();
         ctx.restore();
+    }
+}
+
+class UFO {
+    constructor(canvasWidth, canvasHeight, isSmall = false) {
+        this.isSmall = isSmall;
+        this.size = isSmall ? UFO_SMALL_SIZE : UFO_LARGE_SIZE;
+        this.speed = isSmall ? UFO_SMALL_SPEED : UFO_LARGE_SPEED;
+        
+        // Spawn just outside the screen
+        const spawnLeft = Math.random() < 0.5;
+        this.x = spawnLeft ? -this.size : canvasWidth + this.size;
+        this.y = Math.random() * (canvasHeight - this.size * 2) + this.size;
+        
+        // Move in opposite direction of spawn
+        this.direction = spawnLeft ? 1 : -1;
+        this.velocity = {
+            x: this.direction * this.speed,
+            y: Math.sin(Date.now() / 1000) * this.speed * 0.5
+        };
+        
+        this.shootTimer = 0;
+        this.collisionRadius = this.size / 2;
+        this.hasEnteredScreen = false;
+    }
+
+    getCollisionBounds() {
+        return {
+            x: this.x,
+            y: this.y,
+            radius: this.collisionRadius
+        };
+    }
+
+    update(deltaTime, canvasWidth, canvasHeight, shipX, shipY) {
+        // Update position
+        this.x += this.velocity.x * deltaTime;
+        this.y += this.velocity.y * deltaTime;
+        
+        // Check if UFO has entered the screen
+        if (!this.hasEnteredScreen) {
+            if ((this.direction > 0 && this.x >= 0) || 
+                (this.direction < 0 && this.x <= canvasWidth)) {
+                this.hasEnteredScreen = true;
+            }
+        }
+        
+        // Update vertical movement with smoother oscillation
+        this.velocity.y = Math.sin(Date.now() / 1000) * this.speed * 0.3;
+        
+        // Wrap around screen vertically only
+        if (this.y < -this.size) this.y = canvasHeight + this.size;
+        if (this.y > canvasHeight + this.size) this.y = -this.size;
+        
+        // Update shoot timer
+        this.shootTimer -= deltaTime;
+        
+        // Check if should shoot
+        if (this.shootTimer <= 0) {
+            this.shootTimer = UFO_SHOOT_INTERVAL;
+            return this.shoot(shipX, shipY);
+        }
+        
+        return null;
+    }
+
+    shoot(shipX, shipY) {
+        let angle;
+        if (this.isSmall) {
+            // Targeted shooting for small UFO
+            angle = Math.atan2(shipY - this.y, shipX - this.x) * 180 / Math.PI;
+            // Add slight inaccuracy
+            angle += (Math.random() - 0.5) * 20;
+        } else {
+            // Random shooting for large UFO
+            angle = Math.random() * 360;
+        }
+        
+        return new Bullet(this.x, this.y, angle);
+    }
+
+    draw(ctx) {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+        
+        // Draw UFO body
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = 2;
+        
+        // Draw dome
+        ctx.beginPath();
+        ctx.ellipse(0, -this.size/4, this.size/2, this.size/4, 0, Math.PI, 0);
+        ctx.stroke();
+        
+        // Draw body
+        ctx.beginPath();
+        ctx.ellipse(0, 0, this.size, this.size/3, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        
+        ctx.restore();
+    }
+
+    isVisible(canvasWidth) {
+        // If UFO hasn't entered screen yet, always return true
+        if (!this.hasEnteredScreen) return true;
+        
+        // Once entered, check if it's left the screen on the opposite side
+        if (this.direction > 0) {
+            return this.x <= canvasWidth + this.size;
+        } else {
+            return this.x >= -this.size;
+        }
     }
 }
 
