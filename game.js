@@ -1,8 +1,9 @@
 // Game constants
 const SHIP_SIZE = 20;
 const TURN_SPEED = 360; // degrees per second
-const SHIP_THRUST = 5;
-const FRICTION = 0.7;
+const SHIP_THRUST = 10; // Increased from 5 to 10
+const FRICTION = 0.98; // Increased from 0.7 to 0.98 for smoother deceleration
+const MAX_SPEED = 500; // Added maximum speed limit
 const ASTEROID_SPEED = 50;
 const ASTEROID_VERTICES = 10;
 const ASTEROID_JAG = 0.4;
@@ -12,6 +13,86 @@ const PARTICLE_LIFETIME = 1; // seconds
 const THRUST_PARTICLE_SPEED = 100;
 const EXPLOSION_PARTICLE_SPEED = 200;
 const SCREEN_SHAKE_DURATION = 0.2;
+
+class SoundManager {
+    constructor() {
+        this.sounds = {};
+        this.isMuted = false;
+        this.thrustSound = null;
+        this.beatTimer = 0;
+        this.beatInterval = 0.5; // seconds between beats
+        this.currentBeat = 1;
+        
+        // Load all sounds
+        this.loadSound('thrust', 'sounds/thrust.wav');
+        this.loadSound('fire', 'sounds/fire.wav');
+        this.loadSound('bangLarge', 'sounds/bangLarge.wav');
+        this.loadSound('bangMedium', 'sounds/bangMedium.wav');
+        this.loadSound('bangSmall', 'sounds/bangSmall.wav');
+        this.loadSound('shipExplode', 'sounds/shipExplode.wav');
+        this.loadSound('beat1', 'sounds/beat1.wav');
+        this.loadSound('beat2', 'sounds/beat2.wav');
+
+        // Add mute control
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'm') {
+                this.toggleMute();
+            }
+        });
+    }
+
+    loadSound(name, path) {
+        const audio = new Audio(path);
+        audio.preload = 'auto';
+        this.sounds[name] = audio;
+    }
+
+    play(name, volume = 1.0) {
+        if (this.isMuted) return;
+        
+        const sound = this.sounds[name];
+        if (sound) {
+            // Create a clone for overlapping sounds
+            const clone = sound.cloneNode();
+            clone.volume = volume;
+            clone.play().catch(e => console.log('Sound play failed:', e));
+        }
+    }
+
+    startThrust() {
+        if (this.isMuted) return;
+        
+        if (!this.thrustSound) {
+            this.thrustSound = this.sounds['thrust'].cloneNode();
+            this.thrustSound.loop = true;
+            this.thrustSound.volume = 0.5;
+            this.thrustSound.play().catch(e => console.log('Thrust sound failed:', e));
+        }
+    }
+
+    stopThrust() {
+        if (this.thrustSound) {
+            this.thrustSound.pause();
+            this.thrustSound = null;
+        }
+    }
+
+    updateBackgroundBeat(deltaTime) {
+        this.beatTimer += deltaTime;
+        if (this.beatTimer >= this.beatInterval) {
+            this.beatTimer = 0;
+            this.play(`beat${this.currentBeat}`, 0.3);
+            this.currentBeat = this.currentBeat === 1 ? 2 : 1;
+        }
+    }
+
+    toggleMute() {
+        this.isMuted = !this.isMuted;
+        if (this.isMuted) {
+            this.stopThrust();
+        }
+    }
+}
 
 class Game {
     constructor() {
@@ -48,6 +129,9 @@ class Game {
         
         // Screen shake
         this.screenShake = 0;
+        
+        // Initialize sound manager
+        this.soundManager = new SoundManager();
     }
 
     resizeCanvas() {
@@ -111,6 +195,16 @@ class Game {
             this.createThrustParticles();
         }
         
+        // Update thrust sound
+        if (this.keys['ArrowUp']) {
+            this.soundManager.startThrust();
+        } else {
+            this.soundManager.stopThrust();
+        }
+
+        // Update background beat
+        this.soundManager.updateBackgroundBeat(deltaTime);
+        
         // Check for collisions
         this.checkCollisions();
     }
@@ -122,6 +216,7 @@ class Game {
             this.ship.angle
         );
         this.bullets.push(bullet);
+        this.soundManager.play('fire');
     }
 
     spawnAsteroids(count) {
@@ -181,6 +276,12 @@ class Game {
                     this.createExplosionParticles(asteroid.x, asteroid.y);
                     this.screenShake = SCREEN_SHAKE_DURATION;
                     
+                    // Play explosion sound based on asteroid size
+                    this.soundManager.play(
+                        asteroid.size === 3 ? 'bangLarge' :
+                        asteroid.size === 2 ? 'bangMedium' : 'bangSmall'
+                    );
+                    
                     break;
                 }
             }
@@ -209,6 +310,9 @@ class Game {
                 // Create explosion effect
                 this.createExplosionParticles(this.ship.x, this.ship.y, '#FF0000', 30);
                 this.screenShake = SCREEN_SHAKE_DURATION * 2;
+                
+                // Play ship explosion sound
+                this.soundManager.play('shipExplode');
                 
                 break;
             }
@@ -300,16 +404,28 @@ class Ship {
     }
 
     thrust(force) {
-        this.velocity.x += force * Math.cos(this.angle * Math.PI / 180);
-        this.velocity.y += force * Math.sin(this.angle * Math.PI / 180);
+        const thrustX = force * Math.cos(this.angle * Math.PI / 180);
+        const thrustY = force * Math.sin(this.angle * Math.PI / 180);
+        
+        // Apply thrust
+        this.velocity.x += thrustX;
+        this.velocity.y += thrustY;
+        
+        // Limit maximum speed
+        const speed = Math.sqrt(this.velocity.x * this.velocity.x + this.velocity.y * this.velocity.y);
+        if (speed > MAX_SPEED) {
+            const ratio = MAX_SPEED / speed;
+            this.velocity.x *= ratio;
+            this.velocity.y *= ratio;
+        }
     }
 
     update(deltaTime, canvasWidth, canvasHeight) {
-        // Apply friction
-        this.velocity.x *= FRICTION;
-        this.velocity.y *= FRICTION;
+        // Apply friction with deltaTime scaling
+        this.velocity.x *= Math.pow(FRICTION, deltaTime * 60); // Scale friction with framerate
+        this.velocity.y *= Math.pow(FRICTION, deltaTime * 60);
 
-        // Update position
+        // Update position with deltaTime scaling
         this.x += this.velocity.x * deltaTime;
         this.y += this.velocity.y * deltaTime;
 

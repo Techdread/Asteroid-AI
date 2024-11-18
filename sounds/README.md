@@ -1,0 +1,10 @@
+Sound effects for Asteroids game:
+- thrust.wav: Ship thrust sound
+- fire.wav: Bullet firing sound
+- explode.wav: Asteroid explosion sound
+- bangLarge.wav: Large asteroid explosion
+- bangMedium.wav: Medium asteroid explosion
+- bangSmall.wav: Small asteroid explosion
+- shipExplode.wav: Ship explosion sound
+- beat1.wav: Background beat 1
+- beat2.wav: Background beat 2
