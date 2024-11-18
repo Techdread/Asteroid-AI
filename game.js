@@ -467,6 +467,62 @@ class Game {
                 break;
             }
         }
+
+        // Check UFO-asteroid collisions
+        for (let i = this.ufos.length - 1; i >= 0; i--) {
+            for (let j = this.asteroids.length - 1; j >= 0; j--) {
+                const ufo = this.ufos[i];
+                const asteroid = this.asteroids[j];
+                
+                // Skip if UFO hasn't entered screen yet
+                if (!ufo.hasEnteredScreen) continue;
+                
+                const ufoBounds = ufo.getCollisionBounds();
+                const distance = this.distanceBetweenPoints(
+                    ufoBounds.x, ufoBounds.y,
+                    asteroid.x, asteroid.y
+                );
+                
+                if (distance < ufoBounds.radius + asteroid.radius) {
+                    // Remove UFO
+                    this.ufos.splice(i, 1);
+                    
+                    // Split asteroid
+                    if (asteroid.size > 1) {
+                        for (let k = 0; k < 2; k++) {
+                            this.asteroids.push(new Asteroid(
+                                asteroid.x,
+                                asteroid.y,
+                                asteroid.size - 1
+                            ));
+                        }
+                    }
+                    
+                    // Remove asteroid
+                    this.asteroids.splice(j, 1);
+                    
+                    // Update score (half points for UFO collision)
+                    this.score += Math.floor((4 - asteroid.size) * 50);
+                    if (this.score > this.highScore) {
+                        this.highScore = this.score;
+                        localStorage.setItem('asteroidHighScore', this.highScore);
+                    }
+                    
+                    // Create explosion effects
+                    this.createExplosionParticles(asteroid.x, asteroid.y);
+                    this.createExplosionParticles(ufo.x, ufo.y, '#FF00FF', 20);
+                    this.screenShake = SCREEN_SHAKE_DURATION;
+                    
+                    // Play explosion sounds
+                    this.soundManager.play(
+                        asteroid.size === 3 ? 'bangLarge' :
+                        asteroid.size === 2 ? 'bangMedium' : 'bangSmall'
+                    );
+                    
+                    break;
+                }
+            }
+        }
     }
 
     createThrustParticles() {
@@ -645,10 +701,12 @@ class Game {
         document.getElementById('livesValue').textContent = this.lives;
         document.getElementById('highScoreValue').textContent = this.highScore;
         
-        // Draw level
+        // Draw level (moved to right side of screen)
         this.ctx.fillStyle = 'white';
         this.ctx.font = '20px Arial';
-        this.ctx.fillText(`Level: ${this.level}`, 10, 60);
+        const levelText = `Level: ${this.level}`;
+        const levelMetrics = this.ctx.measureText(levelText);
+        this.ctx.fillText(levelText, this.canvas.width - levelMetrics.width - 20, 30);
         
         this.ctx.restore();
     }
