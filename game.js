@@ -110,6 +110,8 @@ class Game {
         this.score = 0;
         this.lives = 3;
         this.highScore = localStorage.getItem('asteroidHighScore') || 0;
+        this.isGameOver = false;
+        this.level = 1;
         
         // Set canvas size
         this.resizeCanvas();
@@ -144,6 +146,15 @@ class Game {
         
         // Initialize sound manager
         this.soundManager = new SoundManager();
+        
+        // Add event listener for play again button
+        document.getElementById('restartButton').addEventListener('click', () => {
+            document.getElementById('gameOver').classList.add('hidden');
+            this.resetGame();
+            // Resume game loop
+            this.isGameOver = false;
+            requestAnimationFrame(this.gameLoop.bind(this));
+        });
     }
 
     resizeCanvas() {
@@ -160,15 +171,13 @@ class Game {
         // Calculate delta time
         const deltaTime = (timestamp - this.lastTime) / 1000;
         this.lastTime = timestamp;
-
-        // Update
-        this.update(deltaTime);
         
-        // Draw
-        this.draw();
-
-        // Next frame
-        requestAnimationFrame((timestamp) => this.gameLoop(timestamp));
+        // Update game state
+        if (!this.isGameOver) {
+            this.update(deltaTime);
+            this.draw();
+            requestAnimationFrame(this.gameLoop.bind(this));
+        }
     }
 
     update(deltaTime) {
@@ -234,6 +243,11 @@ class Game {
         
         // Check for collisions
         this.checkCollisions();
+        
+        // Check if level is complete (no asteroids left)
+        if (this.asteroids.length === 0) {
+            this.nextLevel();
+        }
     }
 
     shoot() {
@@ -362,6 +376,7 @@ class Game {
                 if (this.lives <= 0) {
                     document.getElementById('gameOver').classList.remove('hidden');
                     document.getElementById('finalScore').textContent = this.score;
+                    this.isGameOver = true;
                 } else {
                     // Reset ship position
                     this.ship.x = this.canvas.width / 2;
@@ -393,6 +408,7 @@ class Game {
                 if (this.lives <= 0) {
                     document.getElementById('gameOver').classList.remove('hidden');
                     document.getElementById('finalScore').textContent = this.score;
+                    this.isGameOver = true;
                 } else {
                     // Reset ship position
                     this.ship.x = this.canvas.width / 2;
@@ -432,6 +448,7 @@ class Game {
                 if (this.lives <= 0) {
                     document.getElementById('gameOver').classList.remove('hidden');
                     document.getElementById('finalScore').textContent = this.score;
+                    this.isGameOver = true;
                 } else {
                     // Reset ship position
                     this.ship.x = this.canvas.width / 2;
@@ -522,6 +539,84 @@ class Game {
         }
     }
 
+    nextLevel() {
+        // Increment level
+        this.level++;
+        
+        // Create asteroids for new level (initial 3 + 2 per level)
+        const numAsteroids = 3 + (this.level - 1) * 2;
+        for (let i = 0; i < numAsteroids; i++) {
+            this.createAsteroid();
+        }
+        
+        // Reset ship position
+        this.ship.x = this.canvas.width / 2;
+        this.ship.y = this.canvas.height / 2;
+        this.ship.velocity = { x: 0, y: 0 };
+        this.ship.angle = 0;
+        
+        // Add bonus points for completing level
+        this.score += 1000;
+        
+        // Create level complete effect
+        for (let i = 0; i < 30; i++) {
+            const angle = (i / 30) * Math.PI * 2;
+            const speed = 200;
+            this.particles.push(new Particle(
+                this.ship.x,
+                this.ship.y,
+                {
+                    x: Math.cos(angle) * speed,
+                    y: Math.sin(angle) * speed
+                },
+                2,
+                '#00FF00',
+                4
+            ));
+        }
+        
+        // Add screen shake effect
+        this.screenShake = SCREEN_SHAKE_DURATION;
+        
+        // Play level complete sound
+        this.soundManager.play('bangLarge', 0.7);
+    }
+
+    resetGame() {
+        // Reset game objects
+        this.ship = new Ship(this.canvas.width / 2, this.canvas.height / 2);
+        this.asteroids = [];
+        this.bullets = [];
+        this.ufoBullets = [];
+        this.ufos = [];
+        this.particles = [];
+        
+        // Reset game state
+        this.lives = 3;
+        this.score = 0;
+        this.level = 1;
+        this.screenShake = 0;
+        this.ufoSpawnTimer = UFO_SPAWN_INTERVAL;
+        this.shootCooldown = 0;
+        this.lastTime = performance.now();
+        
+        // Create initial asteroids
+        const numAsteroids = 3;
+        for (let i = 0; i < numAsteroids; i++) {
+            this.createAsteroid();
+        }
+    }
+
+    createAsteroid() {
+        let x, y;
+        do {
+            x = Math.random() * this.canvas.width;
+            y = Math.random() * this.canvas.height;
+        } while (this.distanceBetweenPoints(x, y, this.ship.x, this.ship.y) < 100);
+        
+        this.asteroids.push(new Asteroid(x, y, 3));
+    }
+
     draw() {
         // Apply screen shake
         this.ctx.save();
@@ -549,6 +644,11 @@ class Game {
         document.getElementById('scoreValue').textContent = this.score;
         document.getElementById('livesValue').textContent = this.lives;
         document.getElementById('highScoreValue').textContent = this.highScore;
+        
+        // Draw level
+        this.ctx.fillStyle = 'white';
+        this.ctx.font = '20px Arial';
+        this.ctx.fillText(`Level: ${this.level}`, 10, 60);
         
         this.ctx.restore();
     }
